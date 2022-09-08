@@ -5,8 +5,7 @@ t_market_item_state = sp.TVariant(
     created = sp.TAddress,
     release = sp.TAddress,
     inactive = sp.TAddress,
-).layout(("created",("release", "inactive")))
-
+)
 t_market_item = sp.TRecord(
     id = sp.TNat,
     address = sp.TAddress,
@@ -15,7 +14,7 @@ t_market_item = sp.TRecord(
     buyer = sp.TOption(sp.TAddress),
     price = sp.TMutez,
     state = t_market_item_state
-).layout(("id", ("address", ("token_id", ("seller", ("buyer", ("price", "state")))))))
+)
 
 # FA2 parameters specifications
 
@@ -38,15 +37,12 @@ t_transfer_params = sp.TList(t_transfer_batch)
 
 class Market(sp.Contract):
 
-    def __init__(self, params):
-        self.init_type(sp.TRecord(
-            owner = sp.TAddress,
-            list_fee = sp.TMutez
-        ))
+    def __init__(self, owner, list_fee):
+        
         self.init(
             item_id = sp.nat(1),
-            owner_address = params.owner,
-            list_fee = params.list_fee,
+            owner_address = owner,
+            list_fee = list_fee,
             market_items = sp.big_map(
                 tkey=sp.TNat,
                 tvalue=t_market_item,
@@ -82,6 +78,7 @@ class Market(sp.Contract):
         sp.verify(params.price > sp.mutez(0), "price must be at least 1 mutez")
         sp.verify(sp.amount == self.data.list_fee, "fee must be equal to listing fee")
 
+        # current FA2 contract has no on-chain view 
         is_operator = sp.contract(
             t_operator_permission, 
             params.contract_address, 
@@ -151,9 +148,8 @@ class Market(sp.Contract):
        ], t= t_transfer_batch), sp.tez(0), transfer)
 
        profit = sp.amount - self.data.list_fee
-       # FIXME: maybe using the add_operations is more sound 
-       sp.transfer(sp.unit, self.data.owner_address, self.data.list_fee)
-       sp.transfer(sp.unit, item.seller, profit)
+       sp.send(self.data.owner_address, self.data.list_fee)
+       sp.send(item.seller, profit)
 
        item_id = item.id
        
@@ -162,7 +158,7 @@ class Market(sp.Contract):
        with sp.else_():
             self.data.user_items[sp.sender] = sp.list([item_id], t = sp.TNat)
 
-       item.buyer = sp.sender
+       item.buyer = sp.some(sp.sender)
        item.state = sp.variant("release", sp.sender)
 
 
@@ -172,35 +168,33 @@ class Market(sp.Contract):
         """
         fetch the active items
         """
-        result = sp.list([], t=t_market_item)
-        with sp.for_("item", self.data.market_items) as item:
+        result = sp.local("result", sp.list(l=[], t=t_market_item)).value
+        sp.compute
+        with sp.for_("index", sp.range(1, self.data.item_id+1)) as index:
+            item = self.data.market_items[index]
             with sp.if_(item.state.is_variant("created")):
-                r = sp.record(
-                    id = item.id,
-                    address = item.address,
-                    token_id = item.token_id,
-                    seller = item.seller,
-                    buyer = item.buyer,
-                    price = item.price,
-                    state = item.state
-                )
-                result.push(r)
+                result.push(item)
         
         sp.result(result)
 
     @sp.offchain_view()
     def fetch_purchased_items(self):
+        """
+        it is your turn  
+        """
         pass
 
     @sp.offchain_view()
     def fetch_created_items(self):
+        """
+        it it your turn
+        """
         pass
 
 
 sp.add_compilation_target(
     "nft_market", 
     Market(
-        sp.record(
-            owner = sp.address("tz1TZBoXYVy26eaBFbTXvbQXVtZc9SdNgedB"), 
-            list_fee = sp.tez(1))
-))
+        sp.address("tz1TZBoXYVy26eaBFbTXvbQXVtZc9SdNgedB"), 
+        sp.tez(1))
+)
